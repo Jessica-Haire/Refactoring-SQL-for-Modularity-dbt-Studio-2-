@@ -9,10 +9,16 @@ raw_payments as (
     select * from {{ source("stripe", "payment") }}
 ),
 
--- Logical CTEs
+-- Logical CTEs split into two
+-- Staging
 customers as (
-        select first_name || ' ' || last_name as name, *
+        select 
+        id as customer_id,
+        first_name || ' ' || last_name as full_name,
+        last_name as surname,
+        first_name as givenname 
         from raw_customers
+
     ),
 a as (
                 select
@@ -22,16 +28,14 @@ a as (
                     *
                 from raw_orders
             ),
-b as (
-                select first_name || ' ' || last_name as name, *
-                from raw_customers
-            ),
+
+-- Marts
 customer_order_history as(
         select
-            b.id as customer_id,
-            b.name as full_name,
-            b.last_name as surname,
-            b.first_name as givenname,
+            customers.customer_id,
+            customers.full_name,
+            customers.surname,
+            customers.givenname,
 
             min(a.order_date) as first_order_date,
 
@@ -79,14 +83,14 @@ customer_order_history as(
             array_agg(distinct a.id) as order_ids
 
         from a  
-        join b
-            on a.user_id = b.id
+        join customers
+            on a.user_id = customers.customer_id
 
         left outer join raw_payments as c on a.id = c.orderid
 
         where a.status not in ('pending') and c.status != 'fail'
 
-        group by b.id, b.name, b.last_name, b.first_name
+        group by customers.customer_id, customers.full_name, customers.surname, customers.givenname
 
     ),
 
@@ -95,18 +99,18 @@ final as (
 select
     orders.id as order_id,
     orders.user_id as customer_id,
-    customers.last_name as surname,
-    customers.first_name as givenname,
-    customer_order_history.first_order_date,
-    customer_order_history.order_count,
-    customer_order_history.total_lifetime_value,
+    customers.surname,
+    customers.givenname,
+    first_order_date,
+    order_count,
+    total_lifetime_value,
     round(payments.amount / 100.0, 2) as order_value_dollars,
     orders.status as order_status,
     payments.status as payment_status
 from raw_orders as orders
 
 join customers
-on orders.user_id = customers.id
+on orders.user_id = customers.customer_id
 
 join customer_order_history    
 on orders.user_id = customer_order_history.customer_id
