@@ -1,45 +1,11 @@
 -- Import CTEs
 with
-    raw_customers as (select * from {{ source("jaffle_shop", "customers") }}),
-    raw_orders as (select * from {{ source("jaffle_shop", "orders") }}),
-    raw_payments as (select * from {{ source("stripe", "payment") }}),
+    customers as (select * from {{ ref('stg_customers') }}),
+    orders as (select * from {{ ref('stg_orders') }}),
+    payments as (select * from {{ ref('stg_payments') }}),
 
     -- Logical CTEs split into two
     -- Staging
-    customers as (
-        select
-            id as customer_id,
-            first_name || ' ' || last_name as full_name,
-            last_name as surname,
-            first_name as givenname
-        from raw_customers
-
-    ),
-    orders as (
-        select
-            row_number() over (
-                partition by user_id order by order_date, id
-            ) as user_order_seq,
-            id as order_id,
-            user_id as customer_id,
-            status as order_status,
-            _etl_loaded_at,
-            order_date
-        from raw_orders
-    ),
-
-    payments as (
-        select
-            id as payment_id,
-            orderid as order_id,
-            round(amount / 100.0, 2) as payment_amount,
-            paymentmethod as payment_method,
-            status as payment_status,
-            _batched_at,
-            created as payment_created_at
-        from raw_payments 
-    ),
-
     -- Marts
     customer_order_history as (
         select
