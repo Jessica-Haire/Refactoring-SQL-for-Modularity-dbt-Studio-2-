@@ -2,11 +2,33 @@
 with
     customers as (select * from {{ ref('stg_customers') }}),
     orders as (select * from {{ ref('stg_orders') }}),
-    payments as (select * from {{ ref('stg_payments') }}),
+    payments as (select * from {{ ref('stg_payments') }}
+    where payment_status != 'fail'),
 
     -- Logical CTEs split into two
     -- Staging
     -- Marts
+
+    --
+    order_totals as (
+        select 
+        order_id,
+        payment_status,
+        sum(payment_amount) as order_value_dollars
+
+        from payments
+        group by 1,2
+    ),  
+    
+    order_values_joined as (
+
+        select orders.*,
+        order_totals.payment_status,
+        order_totals.order_value_dollars
+        from orders
+        left join order_totals
+        on orders.order_id = order_totals.order_id
+    ),  --
     customer_order_history as (
         select
             customers.customer_id,
@@ -16,29 +38,20 @@ with
 
             min(orders.order_date) as first_order_date,
 
-            min(
-                case
-                    when orders.order_status not in ('returned', 'return_pending')
-                    then orders.order_date
-                end
-            ) as first_non_returned_order_date,
+            min(valid_order_date) as first_non_returned_order_date,
 
-            max(
-                case
-                    when orders.order_status not in ('returned', 'return_pending')
-                    then orders.order_date
-                end
-            ) as most_recent_non_returned_order_date,
+            max(valid_order_date) as most_recent_non_returned_order_date,
 
             coalesce(max(orders.user_order_seq), 0) as order_count,
 
             coalesce(
-                count(case when orders.order_status != 'returned' then 1 end), 0
+                count(case when orders.valid_order_date is not null 
+                then 1 end), 0
             ) as non_returned_order_count,
 
             sum(
                 case
-                    when orders.order_status not in ('returned', 'return_pending')
+                    when orders.valid_order_date is not null
                     then c.payment_amount
                     else 0
                 end
@@ -46,14 +59,15 @@ with
 
             sum(
                 case
-                    when orders.order_status not in ('returned', 'return_pending')
+                    when orders.valid_order_date is not null
                     then c.payment_amount
                     else 0
                 end
             ) / nullif(
                 count(
                     case
-                        when orders.order_status not in ('returned', 'return_pending') then 1
+                        when orders.valid_order_date is not null
+                        then 1
                     end
                 ),
                 0
@@ -68,9 +82,7 @@ with
         left outer join payments as c 
         on orders.order_id = c.order_id
 
-        where orders.order_status not in ('pending') and c.payment_status != 'fail'
-
-        group by
+           group by
             customers.customer_id,
             customers.full_name,
             customers.surname,
@@ -101,7 +113,6 @@ with
 
         left outer join payments on orders.customer_id = payments.order_id
 
-        where payments.payment_status != 'fail'
     )
 
 -- Final Select
